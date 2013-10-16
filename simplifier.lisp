@@ -42,6 +42,8 @@
 	    ((+ x+) (+ x))
 	    ((x+ + y+) (+ x y))
 	    ((x+ - y+) (- x y))
+	    ((d y+ / d x) (d y x))
+	    ((Int y+ d x) (int y x))
 	    ((x+ * y+) (* x y))
 	    ((x+ / y+) (/ x y))
 	    ((x+ ^ y+) (^ x y))))
@@ -93,7 +95,20 @@
 	     ((x ^ y) / (x ^ z) = x ^ (y - x))
 	     (log x + log y = log(x * y))
 	     (log x - log y = log(x / y))
-	     ((sin x) ^ 2 + (cos x) ^ 2 = 1))))
+	     ((sin x) ^ 2 + (cos x) ^ 2 = 1)
+	     (d x / d x = 1)
+	     (d (u + v) / d x = (d u / d x) + (d v / d x))
+	     (d (u - v) / d x = (d u / d x) - (d v / d x))
+	     (d (-u) / d x = - (d u / d x))
+	     (d (u * v) / d x = u * (d v / d x) + v * (d u / d x))
+	     (d (u / v) / d x = (v * (d u / d x) - u * (d v / d x)) / v ^ 2)
+	     (d (u ^ n) / d x = n * u ^ (n - 1) * (d u / d x))
+	     (d (u ^ v) / d x = v * u ^ (v - 1) * (d u / d x) + u ^ v * (log u) * (d u / d v))
+	     (d (log u) / d x = (d u / d x) / u)
+	     (d (sin u) / d x = (cos u) * (d u / d x))
+	     (d (cos u) / d x = - (sin u) * (d u / d x))
+	     (d (e ^ u) / d x = (e ^ u) * (d u / d x))
+	     (d u / d x = 0)))))
 
 (defun ^ (x y) "Exponentiation" (expt x y))
 
@@ -114,8 +129,9 @@
 
 (defun simplify-expr (expr)
   "Simplify using a rule, or by doing arithmatic"
-  (cond ((rule-based-translator
-	  expr
+  (cond ((simplify-by-fn exp))
+	(rule-based-translator
+	 expr
 	  *simplification-rules*
 	  :rule-if #'expr-lhs
 	  :rule-then #'expr-rhs
@@ -130,3 +146,132 @@
 	   (and (eq (expr-op expr) '^)
 		(integerp (second (expr-args expr)))))))
 
+(defun simp-fn (op)
+  (get op 'simp-fn))
+
+(defun set-simp-fn (op fn)
+  (setf (simp-fn op) fn))
+
+(defun simplify-by-fn (expr)
+  "Simplify with the simplification function for expr if it has one"
+  (let* ((fn (simp-fn (expr-op expr)))
+	 (result (if fn (funcall fn expr))))
+    (if result
+	(simplify result))))
+
+(defun factorize (expr)
+  "Return a list of the factors of expr"
+  (let ((factors '())
+	(constant 1))
+    (labels
+	((fac (x n)
+	   (cond ((numberp x)
+		  (setf constant (* constant (expt x n))))
+		 ((starts-with x '*)
+		  (fac (expr-lhs x) n)
+		  (fac (expr-rhs x) n))
+		 ((starts-with x '/)
+		  (fac (expr-lhs x) n)
+		  (fac (expr-rhs x) (- n)))
+		 ((and (starts-with x '-) (= 1 (length (expr-args x))))
+		  (setf constant (- constant))
+		  (fac (expr-lhs x) n))
+		 ((and (starts-with x '^) (numberp (expr-rhs x)))
+		  (fac (expr-lhs x) (* n (expr-rhs x))))
+		 (t (let ((factor (find x factors :key #'expr-lhs :test #'equal)))
+		      (if factor
+			  (incf (expr-rhs factor) n)
+			  (push `(^ ,x ,n) factors)))))))
+      (fac expr 1)
+      (case constant
+	(0 '((^ 0 1)))
+	(1 factors)
+	(t `((^ ,constant 1) . ,factors))))))
+
+(defun unfactorize (factors)
+  (cond ((null factors) 1)
+	((= 1 (length factors)) factors)
+	(t `(* ,(first factors) ,(unfactorize (rest factors))))))
+
+(defun divide-factors (numer denom)
+  "Divide a list of factors by another, producing a third"
+  (let ((result (mapcar #'copy-list numer)))
+    (dolist (d denom)
+      (let ((factor (find (expr-lhs d) result :key #'expr-lhs :test #'equal)))
+	(if factor
+	    (decf (expr-rhs factor) (expr-rhs d))
+	    (push `(^ ,(expr-lhs d) ,(- (expr-rhs d))) result))))
+    (delete 0 result :key #'expr-rhs)))
+
+(defun integrate (expr x)
+  (cond ((free-of expr x)
+	 `(* ,expr x))
+	((starts-with expr '+)
+	 `(+ ,(integrate (expr-lhs expr) x) ,(integrate (expr-rhs expr) x)))
+	((starts-with expr '-)
+	 (ecase (length (expr-args expr))
+	   (1 (integrate (expr-lhs expr) x))
+	   (2 `(- ,(integrate (expr-lhs expr) x) ,(integrate (expr-rhs expr) x)))))
+	((multiple-value-bind (const-factors x-factors)
+	     (partition-if #'(lambda (factor)
+			       (free-of factor x))
+			   (factorize expr))
+	   (simplify
+	    `(* ,(unfactorize const-factors)
+		,(cond ((null x-factors) x)
+		       ((some #'(lambda (factor)
+				  (deriv-divides factor x-factors x))
+			      x-factors))
+		       (t `(int? ,(unfactorize x-factors) ,x)))))))))
+
+(defun partition-if (pred seq)
+  "Return 2 lists, elemets that satisfy pred, and those that don't"
+  (let ((yes-list ())
+	(no-list ()))
+    (dolist (elt alist)
+      (if (funcall pred elt)
+	  (push elt yes-list)
+	  (push elt no-list)))
+    (values (nreverse yes-list) (nreverse no-list))))
+
+(defun deriv-divides (factor x-factors x)
+  (assert (starts-with factor '^))
+  (let* ((u (expr-lhs factor))
+	 (n (expr-rhs factor))
+	 (k (divide-factors factors (factorize `(* ,factor ,(deriv u x))))))
+    (cond ((free-of k x)
+	   (if (= n -1)
+	       `(* ,(unfactorize k) (log ,u))
+	       `(/ (* ,(unfactorize k) (^ ,u ,(1+ n))) ,(1+ n))))
+	  ((and (= n 1) (in-integral-table? u))
+	   (let ((k2 (divide-factors factors (factorize `(* ,u ,(deriv (expr-lhs u) x))))))
+	     (if (free-of k2 x)
+		 `(* ,(integrate-from-table (expr-op u) (expr-lhs u)) ,(unfactorize k2))))))))
+
+(defun deriv (y x)
+  (simplify `(d ,y ,x)))
+
+(defun integration-table (rules)
+  (dolist (i-rule rules)
+    (let ((rule (infix->prefix i-rule)))
+      (setf (get (expr-op (expr-lhs (expr-lhs rule))) 'int) rule))))
+
+(defun in-integral-table? (expr)
+  (and (expr-p expr) (get (expr-op expr) 'int)))
+
+(defun integrate-from-table (op arg)
+  (let ((rule (get op 'int)))
+    (subst arg (expr-lhs (expr-lhs (expr-lhs rule))) (expr-rhs rule))))
+
+(integration-table
+ '((Int log(x) d x = x * log(x) - x)
+   (Int exp(x) d x = exp(x))
+   (Int sin(x) d x = - cos(x))
+   (Int cos(x) d x = sin(x))
+   (Int tan(x) d x = - log(cos(x)))
+   (Int sinh(x) d x = cosh(x))
+   (Int cosh(x) d x = sinh(x))
+   (Int tanh(x) d x = log(cosh(x)))))
+
+(set-simp-fn 'Int #'(lambda (expr)
+		      (integrate (expr-lhs expr) (expr-rhs expr))))
