@@ -1,7 +1,7 @@
 (defun infix->prefix (infix-expr)
   (prefix->infix infix-expr))
 
-(defun infix->prefix (expr)
+(defun prefix->infix (expr)
   (cond ((atom expr) expr)
 	((= (length expr) 1)
 	 (infix->prefix (first expr)))
@@ -129,9 +129,9 @@
 
 (defun simplify-expr (expr)
   "Simplify using a rule, or by doing arithmatic"
-  (cond ((simplify-by-fn exp))
-	(rule-based-translator
-	 expr
+  (cond ((simplify-by-fn expr))
+	((rule-based-translator
+	  expr
 	  *simplification-rules*
 	  :rule-if #'expr-lhs
 	  :rule-then #'expr-rhs
@@ -150,7 +150,7 @@
   (get op 'simp-fn))
 
 (defun set-simp-fn (op fn)
-  (setf (simp-fn op) fn))
+  (setf (get op 'simp-fn) fn))
 
 (defun simplify-by-fn (expr)
   "Simplify with the simplification function for expr if it has one"
@@ -228,7 +228,7 @@
   "Return 2 lists, elemets that satisfy pred, and those that don't"
   (let ((yes-list ())
 	(no-list ()))
-    (dolist (elt alist)
+    (dolist (elt seq)
       (if (funcall pred elt)
 	  (push elt yes-list)
 	  (push elt no-list)))
@@ -238,13 +238,13 @@
   (assert (starts-with factor '^))
   (let* ((u (expr-lhs factor))
 	 (n (expr-rhs factor))
-	 (k (divide-factors factors (factorize `(* ,factor ,(deriv u x))))))
+	 (k (divide-factors x-factors (factorize `(* ,factor ,(deriv u x))))))
     (cond ((free-of k x)
 	   (if (= n -1)
 	       `(* ,(unfactorize k) (log ,u))
 	       `(/ (* ,(unfactorize k) (^ ,u ,(1+ n))) ,(1+ n))))
 	  ((and (= n 1) (in-integral-table? u))
-	   (let ((k2 (divide-factors factors (factorize `(* ,u ,(deriv (expr-lhs u) x))))))
+	   (let ((k2 (divide-factors x-factors (factorize `(* ,u ,(deriv (expr-lhs u) x))))))
 	     (if (free-of k2 x)
 		 `(* ,(integrate-from-table (expr-op u) (expr-lhs u)) ,(unfactorize k2))))))))
 

@@ -120,7 +120,7 @@ Returns the extended binding list if match is successful"
   "Succeed if any of the patterns matches"
   (if (null patterns)
       fail
-      (let ((new-bindings (pat-match (first patterns input bindings))))
+      (let ((new-bindings (pat-match (first patterns) input bindings)))
 	(if (eq new-bindings fail)
 	    (match-or (rest patterns) input bindings)
 	    new-bindings))))
@@ -166,7 +166,7 @@ If pat1 is non-constant, then just return start."
   (let ((var (second (first pattern)))
 	(pat (rest pattern)))
     (or (pat-match (cons var pat) input bindings)
-	(pat-match (pat input bindings)))))
+	(pat-match pat input bindings))))
 
 (defun match-if (pattern input bindings)
   "Test an arbitrary expression involving variables"
@@ -199,10 +199,14 @@ If pat1 is non-constant, then just return start."
 		  (funcall action result (funcall rule-then rule)))))
 	rules))
 
+(defun switch-viewpoint (words)
+  "Switch word from I to you and vice versa"
+  (sublis '((I . you) (you . I) (me . you) (am . are)) words))
+
 (defun use-elize-rules (input)
   (rule-based-translator
    input
    *eliza-rules*
-   :acton #'(lambda (bindings responses)
+   :action #'(lambda (bindings responses)
 	      (sublis (switch-viewpoint bindings)
 		      (random-elt responses)))))
