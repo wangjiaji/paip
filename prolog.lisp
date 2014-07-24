@@ -1,30 +1,99 @@
-(defconstant fail nil "Indicates pat-match failure")
+(defun clause-head (clause)
+  (first clause))
 
-(defconstant no-bindings '((t . t))
-  "Indicates pat-match success with no variables")
+(defun clause-body (clause)
+  (rest clause))
 
-(defun variable-p (x)
-  "Is x a symbol begins with a question mark?"
-  (and (symbol x) (equal (char (symbol-name x) 0) #\?)))
+(defun get-clauses (pred)
+  (get pred 'clauses))
 
-(defun get-binding (var bindings)
-  (assoc var bindings))
+(defun predicate (relation)
+  (first relation))
 
-(defun binding-val (binding)
-  (cdr binding))
+(defvar *db-predicates* nil
+  "A list of all predicates stored in the database")
 
-(defun lookup (var bindings)
-  (binding-val (get-binding var bindings)))
+(defmacro <- (&rest clause)
+  "Add a clause to the database"
+  `(add-clause ',clause))
 
-(defun extend-bindings (var val bindings)
-  (acons var val (if (and (eq bindings no-bindings))
-		     nil
-		     bindings)))
+(defun add-clause (clause)
+  "Add a clause to the database, indexed by head's predicate"
+  (let ((pred (predicate (clause-head clause))))
+    (assert (and (symbolp pred) (not (variable-p pred))))
+    (pushnew pred *db-predicates*)
+    (setf (get pred 'clause)
+	  (nconc (get-clauses pred) (list clause)))
+    pred))
 
-(defun match-variable (var input bindings)
-  (let ((binding (get-binding var bindings)))
-    (cond ((not binding)
-	   (extend-bindings var input bindings))
-	  ((equal input (binding-val binding))
-	   bindings)
-	  (t fail))))
+(defun clear-db ()
+  "Remove all clauses (for all predicates) from the database"
+  (mapc #'clear-predicate *db-predicates*))
+
+(defun clear-predicate (predicate)
+  "Remove the clauses for a single predicate"
+  (setf (get predicate 'clauses) nil))
+
+(defun prove (goal bindings)
+  "Return a list of possible solutions to goal"
+  (mapcan #'(lambda (clause)
+	      (let ((new-clause (rename-variables clause)))
+		(prove-all (clause-body new-clause)
+			   (unify goal (clause-head new-clause) bindings))))
+	  (get-clauses (predicate goal))))
+
+(defun prove-all (goals bindings)
+  "Return a list of solutions to the conjunction of goals"
+  (cond ((eq bindings fail) fail)
+	((null goals) (list bindings))
+	(t (mapcan #'(lambda (goal-solution)
+		       (prove-all (rest goals) goal-solution))
+		   (prove (first goals) bindings)))))
+
+(defun rename-variables (x)
+  "Replace all variables in x with new ones"
+  (sublis (mapcar #'(lambda (var)
+		      (cons var (gensym (string var))))
+		  (variables-in x))
+	  x))
+
+(defun variables-in (expr)
+  "Return a list of all the variables in expr"
+  (unique-find-anywhere-if #'variable-p expr))
+
+(defun unique-find-anywhere-if (predicate tree &optional found-so-far)
+  "Return a list of leaves of tree satisfying predicate, with duplicates removed"
+  (if (atom tree)
+      (if (funcall predicate tree)
+	  (adjoin tree found-so-far)
+	  found-so-far)
+      (unique-find-anywhere-if predicate
+			       (first tree)
+			       (unique-find-anywhere-if predicate
+							(rest tree)
+							found-so-far))))
+
+(defmacro ?- (&rest goals)
+  `(top-level-prove ',goals))
+
+(defun top-level-prove (goals)
+  "Prove the goals, and print variables readably"
+  (show-prolog-solutions (variables-in goals)
+			 (prove-all goals no-bindings)))
+
+(defun show-prolog-solutions (vars solutions)
+  "Print the variables in each of the solutions"
+  (if (null solutions)
+      (format t "~&No.")
+      (mapc #'(lambda (solution)
+		(show-prolog-vars vars solution))
+	    solutions))
+  (values))				; No return value
+
+(defun show-prolog-vars (vars bindings)
+  "Print each variable with its bindings"
+  (if (null vars)
+      (format t "~&Yes")
+      (dolist (var vars)
+	(format t "~&~a = ~a" var (subst-bindings bindings var))))
+  (princ ";"))
