@@ -74,4 +74,26 @@
 							found-so-far))))
 
 (defmacro ?- (&rest goals)
-  `(prove-all ',goals no-bindings))
+  `(top-level-prove ',goals))
+
+(defun top-level-prove (goals)
+  "Prove the goals, and print variables readably"
+  (show-prolog-solutions (variables-in goals)
+			 (prove-all goals no-bindings)))
+
+(defun show-prolog-solutions (vars solutions)
+  "Print the variables in each of the solutions"
+  (if (null solutions)
+      (format t "~&No.")
+      (mapc #'(lambda (solution)
+		(show-prolog-vars vars solution))
+	    solutions))
+  (values))				; No return value
+
+(defun show-prolog-vars (vars bindings)
+  "Print each variable with its bindings"
+  (if (null vars)
+      (format t "~&Yes")
+      (dolist (var vars)
+	(format t "~&~a = ~a" var (subst-bindings bindings var))))
+  (princ ";"))
