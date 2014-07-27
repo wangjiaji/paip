@@ -7,6 +7,9 @@
 (defun get-clauses (pred)
   (get pred 'clauses))
 
+(defun (setf get-clauses) (clauses pred)
+  (setf (get pred 'clauses) clauses))
+
 (defun predicate (relation)
   (first relation))
 
@@ -22,7 +25,7 @@
   (let ((pred (predicate (clause-head clause))))
     (assert (and (symbolp pred) (not (variable-p pred))))
     (pushnew pred *db-predicates*)
-    (setf (get pred 'clause)
+    (setf (get-clauses pred)
 	  (nconc (get-clauses pred) (list clause)))
     pred))
 
@@ -97,3 +100,12 @@
       (dolist (var vars)
 	(format t "~&~a = ~a" var (subst-bindings bindings var))))
   (princ ";"))
+
+(clear-db)
+(<- (likes Kim Robin))
+(<- (likes Sandy Lee))
+(<- (likes Sandy Kim))
+(<- (likes Robin cats))
+(<- (likes Sandy ?x) (likes ?x cats))
+(<- (likes Kim ?x) (likes ?x Lee) (likes ?x Kim))
+(<- (likes ?x ?x))
