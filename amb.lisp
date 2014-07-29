@@ -11,7 +11,7 @@
 	(some #'(lambda (clause)
 		  (let ((new-clause (rename-variables clause)))
 		    (prove-all (append (clause-body new-clause) other-goals)
-			       (unify goal (clause-head clause) bindings))))
+			       (unify goal (clause-head new-vclause) bindings))))
 	      clauses)
 	(funcall clauses (rest goal) bindings other-goals))))
 
@@ -41,3 +41,6 @@
     (otherwise
      (format t " Type ; to see more results or . to stop")
      (continue-p))))
+
+(<- (member ?item (?item . ?rest)))
+(<- (member ?item (?x . ?rest)) (member ?item ?rest))
