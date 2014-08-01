@@ -18,7 +18,7 @@
 
 (defmacro <- (&rest clause)
   "Add a clause to the database"
-  `(add-clause ',clause))
+  `(add-clause ',(replace-?-vars clause)))
 
 (defun add-clause (clause)
   "Add a clause to the database, indexed by head's predicate"
@@ -77,7 +77,7 @@
 							found-so-far))))
 
 (defmacro ?- (&rest goals)
-  `(top-level-prove ',goals))
+  `(top-level-prove ',(replace-?-vars goals)))
 
 (defun top-level-prove (goals)
   "Prove the goals, and print variables readably"
@@ -100,6 +100,13 @@
       (dolist (var vars)
 	(format t "~&~a = ~a" var (subst-bindings bindings var))))
   (princ ";"))
+
+(defun replace-?-vars (expr)
+  "Replace any ? within expr with a var of the form ?123"
+  (cond ((eq expr '?) (gensym "?"))
+	((atom expr) expr)
+	(t (cons (replace-?-vars (first expr))
+		 (replace-?-vars (rest expr))))))
 
 (clear-db)
 (<- (likes Kim Robin))
