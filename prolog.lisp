@@ -18,7 +18,7 @@
 
 (defmacro <- (&rest clause)
   "Add a clause to the database"
-  `(add-clause ',(replace-?-vars clause)))
+  `(add-clause ',(make-anonymous clause)))
 
 (defun add-clause (clause)
   "Add a clause to the database, indexed by head's predicate"
