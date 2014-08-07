@@ -86,3 +86,24 @@
   #'(lambda (x)
       (reduce #'funcall functions :from-end t :initial-value x)))
 
+(defun find-anywhere (item tree)
+  "Does item occurs anywhere in the tree"
+  (if (atom tree)
+      (if (eql item tree) tree)
+      (or (find-anywhere item (car tree))
+	  (find-anywhere item (cdr tree)))))
+
+(defun find-if-anywhere (pred tree)
+  "If any item in the `tree' satisfies the `pred'"
+  (if (atom tree)
+      (funcall pred tree)
+      (or (find-if-anywhere pred (car tree))
+	  (find-if-anywhere pred (cdr tree)))))
+
+(defun conc-symbol (&rest args)
+  "Concatenate symbols or strings to form an interned symbol"
+  (intern (format nil "~{~a~}" args)))
+
+(defun new-symbol (&rest args)
+  "Concatenate symbols or string to form an uninterned symbol"
+  (make-symbol (format nil "~{~a~}" args)))

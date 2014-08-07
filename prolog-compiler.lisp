@@ -40,9 +40,9 @@
 
 (defun make-predicate (symbol arity)
   "Return the symbol: symbol/arity"
-  (symbol symbol '/ arity))
+  (conc-symbol symbol '/ arity))		; intern function name
 
-(defun compile-clause (params clauses cont)
+(defun compile-clause (params clause cont)
   "Transform away the head, and compile the resulting body"
   (bind-unbound-vars params
 		     (compile-body
@@ -56,8 +56,8 @@
 
 (defun compile-body (body cont bindings)
   "Compile the body of a clause"
+  (prin1 body)
   (if (null body)
-      `(funcall ,cont)
       (let* ((goal (first body))
 	     (macro (prolog-compiler-macro (predicate goal)))
 	     (macro-val (if macro
@@ -98,7 +98,7 @@
   `(setf (get ',name 'prolog-compiler-macro)
 	 #'(lambda ,arglist ,@body)))
 
-(def-prolog-compiler-macro = (goal body cont)
+(def-prolog-compiler-macro = (goal body cont bindings)
   (let ((args (args goal)))
     (if (/= (length args) 2)
 	:pass
@@ -109,7 +109,7 @@
 (defun compile-unify (x y bindings)
   "Return 2 values: code to test if x and y unify, and a new binding list"
   (cond ((not (or (has-variable-p x) (has-variable-p y)))
-	 (values (equal x y) (bindings)))
+	 (values (equal x y) bindings))
 	((and (consp x) (consp y))
 	 (multiple-value-bind (code1 bindings1)
 	     (compile-unify (first x) (first y) bindings)
@@ -168,7 +168,7 @@
   (let ((expr-vars (set-difference (variables-in expr) params)))
     (if expr-vars
 	`(let ,(mapcar #'(lambda (var)
-			   '(,var (?)))
+			   `(,var (?)))
 		       expr-vars)
 	   ,expr)			; eval expr in the new bindings
 	expr)))
@@ -177,9 +177,9 @@
   "Replace varialbes that are only used once with ?"
   (cond ((consp expr)
 	 (cons (make-anonymous (first expr) anon-vars)
-	       (make-anonymous (rest expr) anon-vars))
-	 ((member expr anon-vars) '?)
-	 (t expr))))
+	       (make-anonymous (rest expr) anon-vars)))
+	((member expr anon-vars) '?)
+	(t expr)))
 
 (defun anonymous-variables-in (tree)
   "Return a list of all variables that occur only once in tree"
@@ -222,7 +222,7 @@
 	   (compile-unify-variable y1 x1 bindings))
 	  (t (values 't (extend-bindings x1 y1 bindings))))))
 
-(defun bind-variable-in (expr bindings)
+(defun bind-variables-in (expr bindings)
   "Bind all variables in expr to themselves, and add that to bindings (except for variables already bound"
   (dolist (var (variables-in expr))
     (unless (get-binding var bindings)
