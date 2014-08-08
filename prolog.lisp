@@ -16,6 +16,9 @@
 (defvar *db-predicates* nil
   "A list of all predicates stored in the database")
 
+(defvar *uncompiled* nil
+  "Prolog symbols that have not been compiled")
+
 (defmacro <- (&rest clause)
   "Add a clause to the database"
   `(add-clause ',(make-anonymous clause)))
@@ -25,6 +28,7 @@
   (let ((pred (predicate (clause-head clause))))
     (assert (and (symbolp pred) (not (variable-p pred))))
     (pushnew pred *db-predicates*)
+    (pushnew pred *uncompiled*)
     (setf (get-clauses pred)
 	  (nconc (get-clauses pred) (list clause)))
     pred))
@@ -80,10 +84,36 @@
   `(top-level-prove ',(replace-?-vars goals)))
 
 (defun top-level-prove (goals)
-  "Prove the goals, and print variables readably"
-  (show-prolog-solutions (variables-in goals)
-			 (prove-all goals no-bindings)))
+  "Prove the list of goals by compiling and calling it"
+  ;; Redefine top-level query
+  (clear-predicate 'top-level-query)
+  (let ((vars (delete '? (variables-in goals))))
+    (add-clause `((top-level-query)
+		  ,@goals
+		  (show-prolog-vars ,(mapcar #'symbol-name vars)
+				    ,vars))))
+  ;; Run the code
+  (run-prolog 'top-level-query/0 #'ignore)
+  (format t "~&No.")
+  (values))
 
+(defun run-prolog (procedure cont)
+  "Run a 0 arity prolog procedure with a given continuation"
+  (prolog-compile-symbols)		; compile everything
+  (setf (fill-pointer *trail*) 0)	; reset backtracking trail
+  (setf *var-counter* 0)
+  (catch 'top-level-prove
+    (funcall procedure cont)))
+
+(defun prolog-compile-symbol (&optional (symbols *uncompiled*))
+  (mapc #'prolog-compile symbols)
+  (setf *uncompiled* (set-difference *uncompiled* symbols)))
+
+(defun ignore (&rest args)
+  "Dummy function"
+  (declare (ignore args))
+  nil)
+  
 (defun show-prolog-solutions (vars solutions)
   "Print the variables in each of the solutions"
   (if (null solutions)
