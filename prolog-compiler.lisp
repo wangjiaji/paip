@@ -236,3 +236,21 @@
 	b
 	(or (follow-binding (cdr b) bindings)
 	    b))))
+
+(defun show-prolog-vars/2 (var-names var cont)
+  "Display the variables, and prompt the user to see if we should continue. If not, return to top level"
+  (if (null vars)
+      (format t "~&Yes")
+      (loop for name in var-names
+	 for var in vars do
+	   (format t "~&~a = ~a" name (deref-expr var))))
+  (if (continue-p)
+      (funcall cont)
+      (throw t 'top-level-prove nil)))
+
+(defun deref-expr (expr)
+  "Build something equivalent to `expr' with variables dereferences"
+  (if (atom (deref expr))
+      expr
+      (cons (deref-expr (first expr))
+	    (deref-expr (rest expr)))))
