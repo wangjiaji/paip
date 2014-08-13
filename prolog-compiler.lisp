@@ -23,11 +23,11 @@
 
 (defun compile-predicate (symbol arity clauses)
   "Compile all the clauses for a given symbol/arity into a single Lisp function"
-  (let ((predicate (make-predicate symbol arity))
+  (let ((*predicate* (make-predicate symbol arity))
 	(parameters (make-parameters arity)))
     (compile
      (eval
-      `(defun ,predicate (,@parameters cont)
+      `(defun ,*predicate* (,@parameters cont)
 	 ,@(maybe-add-undo-bindings
 	    (mapcar #'(lambda (clause)
 			(compile-clause parameters clause 'cont))
@@ -54,27 +54,33 @@
 (defun make-= (x y)
   `(= ,x ,y))
 
+(defvar *predicate* nil
+  "The Prolog predicate currently been compiled")
+
 (defun compile-body (body cont bindings)
   "Compile the body of a clause"
-  (prin1 body)
-  (if (null body)
-      (let* ((goal (first body))
-	     (macro (prolog-compiler-macro (predicate goal)))
-	     (macro-val (if macro
-			    (funcall macro goal (rest body) cont bindings))))
-	(if (and macro (not (eq macro-val :pass)))
-	    macro-val
-	    (compile-call (make-predicate (predicate goal)
-					  (relation-arity goal))
-			  (mapcar #'(lambda (arg)
-				      (compile-arg arg bindings))
-				  (args goal))
-			  (if (null (rest body))
-			      cont
-			      `#'(lambda ()
-				   ,(compile-body (rest body)
-						  cont
-						  (bind-new-variables bindings goal)))))))))
+  (cond ((null body)
+	 `(funcall ,cont)
+	 ((eq (first body) '!)
+	  `(progn ,(compile-body (rest body) cont bindings)
+		  (return-from ,*predicate* nil)))
+	 (t (let* ((goal (first body))
+		   (macro (prolog-compiler-macro (predicate goal)))
+		   (macro-val (if macro
+				  (funcall macro goal (rest body) cont bindings))))
+	      (if (and macro (not (eq macro-val :pass)))
+		  macro-val
+		  (compile-call (make-predicate (predicate goal)
+						(relation-arity goal))
+				(mapcar #'(lambda (arg)
+					    (compile-arg arg bindings))
+					(args goal))
+				(if (null (rest body))
+				    cont
+				    `#'(lambda ()
+					 ,(compile-body (rest body)
+							cont
+							(bind-new-variables bindings goal)))))))))))
 
 (defun bind-new-variables (bindings goal)
   "Extend bindings to include any unbound variables in goal"
@@ -236,3 +242,60 @@
 	b
 	(or (follow-binding (cdr b) bindings)
 	    b))))
+
+(defmacro with-undo-bindings (&body body)
+  "Undo bindings after each expression in body except the last"
+  (if (= 1 (length body))
+      (first body)
+      `(let ((old-trail (fill-pointer *trail*)))
+	 ,(first body)
+	 ,@(loop for expr in (rest body)
+		collect '(undo-bindings! old-trail)
+		colect expr))))
+
+(defun not/1 (relation cont)
+  "Negation by failure: If you can't prove G, then (not G) is true"
+  (with-undo-bindings
+      (call/1 relation #'(lambda () (return-from not/1)))
+    (funcall cont)))
+
+(defun bagof/3 (expr goal result cont)
+  "Find all solution to `goal', and for each solution collect the value of `expr'"
+  (let ((answers nil))
+    (call/1 goal #'(lambda ()
+		     (push (deref-copy expr) answers)))
+    (if (and (not (null answers))
+	     (unify! result (nreverse answers)))
+	(funcall cont))))
+
+(defun deref-copy (expr)
+  "Copy the `expr', replacing variables with new ones"
+  (sublis (mapcar #'(lambda (var)
+		      (cons (deref var) (?)))
+		  (unique-find-anywhere-if #'variable-p expr))
+	  expr))
+
+(defun setof/3 (expr goal result cont)
+  "Find all unique solutions to `goal', collect the value of `expr' in each solution to `result'"
+  (let ((answers nil))
+    (call/1 goal #'(lambda ()
+		     (push (deref-copy expr) answers)))
+    (if (and (not (null answers))
+	     (unify! result (delete-duplicates answers :test #'deref-equal)))
+	(funcall cont))))
+
+(defun is/2 (var expr cont)
+  "Does `var' unifies to the lisp `expr'?"
+  (if (and (not (find-if-anywhere #'unbound-var-p expr))
+	   (unify! var (eval (deref-expr expr))))
+      (funcall cont)))
+
+(defun unbound-var-p (expr)
+  (and (variable-p expr)
+       (not (bound-p expr))))
+
+(defun call/1 (goal cont)
+  "Prove `goal' by calling it"
+  (deref goal)
+  (apply (make-predicate (first goal) (length (args goal)))
+	 (append (args goal) (list cont))))

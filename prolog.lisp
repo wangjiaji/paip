@@ -93,7 +93,7 @@
 		  (show-prolog-vars ,(mapcar #'symbol-name vars)
 				    ,vars))))
   ;; Run the code
-  (run-prolog 'top-level-query/0 #'ignore)
+  (run-prolog 'top-level-query/0 #'dummy-ignore)
   (format t "~&No.")
   (values))
 
@@ -109,7 +109,7 @@
   (mapc #'prolog-compile symbols)
   (setf *uncompiled* (set-difference *uncompiled* symbols)))
 
-(defun ignore (&rest args)
+(defun dummy-ignore (&rest args)
   "Dummy function"
   (declare (ignore args))
   nil)
