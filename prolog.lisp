@@ -138,6 +138,93 @@
 	(t (cons (replace-?-vars (first expr))
 		 (replace-?-vars (rest expr))))))
 
+(defvar *search-cut-off* nil
+  "Has the search been stopped?")
+
+(defun prove-all (goals bindings depth)
+  (cond ((eq bindings fail) fail)
+	((null goals) bindings)
+	(t (prove (first goals) bindings (rest goals) depth))))
+
+(defun prove (goal bindings other-goals depth)
+  (if (zerop depth)
+      (progn (setf *search-cut-off* t)
+	     fail)
+      (let ((clauses (get-clauses (predicate goal))))
+	(if (listp clauses)
+	    (some #'(lambda (clause)
+		      (let ((new-clause (rename-variables clause)))
+			(prove-all (append (clause-body new-clause) other-goals)
+				   (unify goal (clause-head new-clause) bindings)
+				   (1- depth))))
+		  clauses)
+	    (funcall clauses (rest goal) bindings other-goals depth)))))
+
+(defparameter *depth-start* 5
+  "Depth of the first round")
+(defparameter *depth-incr* 5
+  "Amount of incrementation after each iteration")
+(defparameter *depth-max* most-positive-fixnum
+  "Deepest depth")
+
+(defun top-level-prove (goals)
+  (let ((all-goals `(,@goals (show-prolog-vars ,@(variables-in goals)))))
+    (loop for depth from *depth-start* to *depth-max* by *depth-incr*
+	 while (let ((*search-cut-off* nil))
+		 (prove-all all-goals no-bindings depth)
+		 *search-cut-off*)))
+  (format t "~&No")
+  (values))
+
+(defun show-prolog-vars (vars bindings other-goals depth)
+  (if (> depth *depth-incr*)
+      fail
+      (progn
+	(if (null vars)
+	    (format t "~&Yes")
+	    (dolist (var vars)
+	      (format t "~&~a = ~a" var (subst-bindings bindings var))))
+	(if (continue-p)
+	    fail
+	    (prove-all other-goals bindings depth)))))
+
+(defun add-fact (fact)
+  "Add fact to database"
+  (if (eq (predicate fact) 'and)
+      (mapc #'add-fact (args fact))
+      (index fact)))
+
+(defun retrieve-fact (query &optional (bindings no-bindings))
+  "Find all facts matching query. Return a list of bindings"
+  (if (eq (predicate query) 'and)
+      (retrieve-conjunction (args query) (list bindings))
+      (retrieve query bindings)))
+
+(defun retrieve-conjunction (conjuncts bindings-lists)
+  (mapcan #'(lambda (bindings)
+	      (cond ((eq bindings fail) nil)
+		    ((null conjuncts) bindings)
+		    (t (retrieve-conjunction (rest conjuncts)
+					     (retrieve-fact (subst-bindings bindings (first conjuncts))
+							    bindings)))))
+	  bindings-lists))
+
+(defun mapc-retrieve (fn query &optional (bindings no-bindings))
+  "Apply `fn' to every list of bindings matching the query"
+  (dolist (bucket (fetch query))
+    (dolist (answer bucket)
+      (let ((new-bindings (unify query answer bindings)))
+	(unless (eq new-bindings fail)
+	  (funcall fn new-bindings))))))
+
+(defun retrieve (query &optional (bindings no-bindings))
+  (let ((answers nill))
+    (mapc-retrieve #'(lambda (bindings)
+		       (push bindings answers))
+		   query
+		   bindings)
+    answers))
+
 (clear-db)
 (<- (likes Kim Robin))
 (<- (likes Sandy Lee))
