@@ -1,3 +1,5 @@
+(defparameter *primitives* '(and sub ind rel val))
+
 (defun clause-head (clause)
   (first clause))
 
@@ -190,9 +192,59 @@
 
 (defun add-fact (fact)
   "Add fact to database"
-  (if (eq (predicate fact) 'and)
-      (mapc #'add-fact (args fact))
-      (index fact)))
+  (cond ((eq (predicate fact) 'and)
+	 (mapc #'add-fact (args fact)))
+	((or (not (every #'atom (args fact)))
+	     (some #'variable-p (args fact))
+	     (not (member (predicate fact) *primitives*)))
+	 (error "ill formed fact: ~a" fact))
+	((not (fact-present-p fact))
+	 (index fact)
+	 (run-attached-fn fact)))
+  t)
+
+
+(defun fact-present-p (fact)
+  "Is `fact' in database?"
+  (retrieve fact))
+
+(defun run-attached-fn (fact)
+  "Run the function associated with `fact'"
+  (apply (get (predicate fact) 'attached-fn) (args fact)))
+
+(defmacro def-attached-fn (pred args &body body)
+  "Define the attached function for a premitive"
+  `(setf (get ',pred 'attached-fn)
+	 #'(lambda ,args ,@body)))
+
+(def-attached-fn ind (individual category)
+  (query-bind (?super) `(sub ,category ?super)
+	      (add-fact `(ind ,individual ,?super))))
+
+(def-attached-fn val (relation ind1 ind2)
+  (query-bind (?cat1 ?cat2) `(rel ,relation ?cat1 ?cat2)
+	      (add-fact `(ind ,ind1 ,cat1))
+	      (add-fact `(ind ,ind2 ,cat2))))
+
+(def-attached-fn rel (relation cat1 cat2)
+  (query-bind (?a ?b) `(ind ,relation ?a ?b)
+	      (run-attached-fn `(ind ,relation ,?a ,?b))))
+
+(def-attached-fn sub (subcat supercat)
+  (query-bind (?super-super) `(sub ,supercat ?super-super)
+	      (index-new-fact `(sub ,subcat ,?super-super))
+	      (query-bind (?sub-sub) `(sub ?sub-sub ,?super-super)
+			  (index-new-fact `(sub ,?sub-sub ,subcat))))
+  (query-bind (?sub-sub) `(sub ?sub-sub ,subcat)
+	      (index-new-fact `(sub ,?sub-sub ,supercat)))
+  (query-bind (?super-super) `(sub ,subcat ?super-super)
+	      (query-bind (?sub-sub) `(sub ?sub-sub ,supercat)
+			  (query-bind (?ind) `(ind ?ind ,?sub-sub)
+				      (index-new-fact `(ind ,?ind ,?super-super))))))
+
+(defun index-new-fact (fact)
+  (unless (fact-present-p fact)
+    (index fact)))
 
 (defun retrieve-fact (query &optional (bindings no-bindings))
   "Find all facts matching query. Return a list of bindings"
@@ -218,12 +270,22 @@
 	  (funcall fn new-bindings))))))
 
 (defun retrieve (query &optional (bindings no-bindings))
-  (let ((answers nill))
+  (let ((answers nil))
     (mapc-retrieve #'(lambda (bindings)
 		       (push bindings answers))
 		   query
 		   bindings)
     answers))
+
+(defun retrieve-bagof (query)
+  "Find all facts that match `query'. Return a list of queries with bindings filled in"
+  (mapcar #'(lambda (bindings)
+	      (subst-bindings bindings query))
+	  (retrieve-fact query)))
+
+(defun retrieve-setof (query)
+  "Find all facts that match `query'. Return a list of unique queries with bindings filled in"
+  (remove-duplicates (retrieve-bagof query) :test #'equal))
 
 (clear-db)
 (<- (likes Kim Robin))
@@ -233,3 +295,71 @@
 (<- (likes Sandy ?x) (likes ?x cats))
 (<- (likes Kim ?x) (likes ?x Lee) (likes ?x Kim))
 (<- (likes ?x ?x))
+
+(defmacro a (&rest args)
+  "Define a new individual and assert facts about it in the database"
+  `(add-fact ',(translate-expr (cons 'a args))))
+
+(defmacro each (&rest args)
+  "Define a new category and assert facts about it in the database"
+  `(add-fact ',(translate-expr (cons 'each args))))
+
+(defmacro ?? (&rest queries)
+  "Return a list of answers satisfying `queries'"
+  `(retrieve-setof ',(translate-expr (maybe-add 'and (replace-?-vars queries))
+				     :query)))
+
+(defun translate-expr (expr &optional query-mode-p)
+  "Translate `expr' into a conjunction of the four primitives"
+  (let ((conjuncts nil))
+    (labels
+	((collect-fact (&rest terms)
+	   (push terms conjuncts))
+	 (translate (expr)
+	   ;; Figure out what kind of expression this is
+	   (cond ((atom expr) expr)
+		 ((eq (first expr) 'a)
+		  (translate-a (rest expr)))
+		 ((eq (first expr) 'each)
+		  (translate-each (rest expr)))
+		 (t (apply #'collect-fact expr)
+		    expr)))
+	 (translate-a (args)
+	   ;; translate (a category [ind] (rel filler)*)
+	   (let* ((category (pop args))
+		  (self (cond ((and args (atom (first args)))
+			       (pop args))
+			      (query-mode-p
+			       (gentemp "?"))
+			      (t (gentemp (string category))))))
+	     (collect-fact 'ind self category)
+	     (dolist (slot args)
+	       (translate-slot 'val self slot))
+	     self))
+	 (translate-each (args)
+	   (let* ((category (pop args)))
+	     (when (eq (predicate (first args)) 'isa)
+	       (dolist (super (rest (pop args)))
+		 (collect-fact 'sub category super)))
+	     (dolist  (slot args)
+	       (translate-slot 'rel category slot))
+	     category))
+	 (translate-slot (primitive self slot)
+	   (assert (= (length slot) 2))
+	   (collect-fact primitive (first slot) self (translate (second slot)))))
+      (translate expr)
+      (maybe-add 'and (nreverse conjuncts)))))
+
+(defun maybe-add (op exprs &optional if-nil)
+  "Make a conjunction of `exprs' when necessary"
+  (cond ((null exprs) if-nil)
+	((= 1 (length exprs))
+	 (first exprs))
+	(t (cons op exprs))))
+
+(defun replace-?-vars (expr)
+  "Replace each ? in expr with a temporary var"
+  (cond ((eq expr '?) (gentemp "?"))
+	((atom expr) expr)
+	(t (cons (replace-?-vars (first expr))
+		 (replace-?-vars (rest expr))))))

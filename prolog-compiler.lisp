@@ -243,7 +243,6 @@
 	(or (follow-binding (cdr b) bindings)
 	    b))))
 
-<<<<<<< HEAD
 (defmacro with-undo-bindings (&body body)
   "Undo bindings after each expression in body except the last"
   (if (= 1 (length body))
@@ -300,7 +299,7 @@
   (deref goal)
   (apply (make-predicate (first goal) (length (args goal)))
 	 (append (args goal) (list cont))))
-=======
+
 (defun show-prolog-vars/2 (var-names var cont)
   "Display the variables, and prompt the user to see if we should continue. If not, return to top level"
   (if (null vars)
@@ -318,4 +317,3 @@
       expr
       (cons (deref-expr (first expr))
 	    (deref-expr (rest expr)))))
->>>>>>> d12f6b2c101bebcea6584f3cc5e4f8a88d481ef3

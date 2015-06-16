@@ -9,10 +9,76 @@
   "Content of an nlist"
   (cdr x))
 
-(defun nlish-push (item nlist)
+(defun (setf nlist-list) (val lst)
+  (setf (cdr lst) val))
+
+(defun nlist-push (item nlist)
   (incf (car nlist))
   (push item (nlist-list nlist))
   nlist)
+
+(defun nalist-push (key val nalist)
+  "Index val under key in a numbered alist"
+  (incf (car nalist))
+  (let ((pair (assoc key (cdr nalist))))
+    (if pair
+	(push val (cdr pair))
+	(push (list key val) (cdr nalist)))))
+
+(defstruct (world (:print-function print-world))
+  name parents current)
+
+(defun get-world (name &optional current (parents (list *world*)))
+  (cond ((world-p name) name)
+	((get name 'world))
+	(t (setf (get name 'world)
+		 (make-world :name name :parents parents :current current)))))
+
+(defun use-world (world)
+  "Make this world current"
+  (setf world (get-world world))
+  (unless (eq world *world*)
+    (set-world-current *world* nil)
+    (set-world-current world t)
+    (setf *world* world)))
+
+(defun use-new-world ()
+  "Make up a new world and use it"
+  (setf *world* (get-world (gensym "W")))
+  (setf (world-current *world*) t)
+  *world*)
+
+(defun set-world-current (world on/off)
+  "Set `world' and its parents on/off"
+  (setf (world-current world) on/off)
+  (dolist (parent (world-parents world))
+    (set-world-current parent on/off)))
+
+(defvar *world* (get-world 'WO nil nil) "The current world used by index and fetch")
+
+(defun mapc-retrieve-in-world (fn query)
+  "Apply the `fn' to every match in the current world"
+  (dolist (bucket (fetch query))
+    (dolist (world/entries bucket)
+      (when (world-current (first world/entries))
+	(dolist (answer (rest world/entries))
+	  (let ((bindings (unify query answer)))
+	    (unless (eq bindings fail)
+	      (funcall fn bindings))))))))
+
+(defun retrieve-in-world (query)
+  "Find all facts that match `query'"
+  (let ((answers nil))
+    (mapc-retrieve-in-world #'(lambda (bindings)
+				(push bindings answers))
+			    query)
+    answers))
+
+(defun retrieve-bagof-in-world (query)
+  "Find all facts in the current world that match `query'"
+  (mapcar #'(lambda (bindings)
+	      (subst-bindings bindings query))
+	  (retrieve-in-world query)))
 
 (defstruct (dtree (:type vector))
   (first nil) (rest nil) (atoms nil) (unknown (make-empty-nlist)))
@@ -30,25 +96,27 @@
       (setf (get predicate 'dtree) nil))
     (setf predicates nil)))
 
-(defun index (key)
+(defun index (key &optional (world *world*))
   "Store key in a dtree node. Key must be (predicate . args)"
-  (dtree-index key key (get-dtree (first key))))
+  (dtree-index key key world (get-dtree (predicate key))))
 
-(defun dtree-index (key value dtree)
+(defun dtree-index (key value world dtree)
   "Index value under all atoms of key in dtree"
   (cond ((consp key)
 	 (dtree-index (first key)
 		      value
+		      world
 		      (or (dtree-first dtree)
 			  (setf (dtree-first dtree) (make-dtree))))
 	 (dtree-index (rest key)
 		      value
+		      world
 		      (or (dtree-rest dtree)
 			  (setf (dtree-rest dtree) (make-dtree)))))
 	((null key))
 	((variable-p key)
-	 (nlist-push value (dtree-unknown dtree)))
-	(t (nlist-push value (lookup-atom key dtree)))))
+	 (nalist-push world value (dtree-unknown dtree)))
+	(t (nalist-push world value (lookup-atom key dtree)))))
 
 (defun lookup-atom (atom dtree)
   (or (lookup atom (dtree-atoms dtree))
@@ -70,7 +138,7 @@
 
 (defun dtree-fetch (pat dtree var-list-in var-n-in best-list best-n)
   "Return 2 values: a list of lists of possible matches to pat, and the number of elements in the list of lists"
-  (if (or (null dtree) (null pat) (variable-p pat)
+  (if (or (null dtree) (null pat) (variable-p pat))
       (values best-list best-n)
       (let* ((var-nlist (dtree-unknown dtree))
 	     (var-n (+ var-n-in (nlist-n var-nlist)))
@@ -115,7 +183,7 @@
   "Find all facts that match `query'. Return a list of expressions that match the query"
   (mapcar #'(lambda (bindings)
 	      (subst-bindings bindings query))
-	  (retrive query)))
+	  (retrieve query)))
 
 (defmacro query-bind (variables query &body body)
   "Execute the body for each match to the query"
@@ -124,6 +192,10 @@
 				    (list var `(subst-bindings ,bindings ',var)))
 				variables)))
     `(mapc-retrieve #'(lambda (,bindings)
-			(let ,vars-and-vars
+			(let ,vars-and-vals
 			  ,@body))
 		    ,query)))
+
+(defun print-world (world &optional (stream t) depth)
+  (declare (ignore depth))
+  (prin1 (world-name world) stream))
